@@ -1,4 +1,5 @@
 import pandas as pd
+import io
 import requests
 import xlrd
 from django.core.management.base import BaseCommand
@@ -39,8 +40,12 @@ class Command(BaseCommand):
         self.stdout.write('All data has been processed')
 
     def parse_and_save(self, file_contents, dam_date):
-        book = xlrd.open_workbook(file_contents=file_contents, ignore_workbook_corruption=True)
-        df = pd.read_excel(book).dropna(subset=['Година'])
+        file_stream = io.BytesIO(file_contents)
+        df = pd.read_excel(
+            file_stream, 
+            engine='xlrd',
+            engine_kwargs={'ignore_workbook_corruption': True}
+        ).dropna(subset=['Година'])
         df['date'] = dam_date
         df['hour'] = df['Година'].astype(str).str.split(':').str[0].astype(int)
         df = df.rename(columns={
@@ -50,6 +55,12 @@ class Command(BaseCommand):
             'Заявлений обсяг продажу, МВт.год': 'declared_sales_volume',
             'Заявлений обсяг купівлі, МВт.год': 'declared_purchase_volume'
         })
+
+        numeric_cols = ['price', 'sales_volume', 'purchase_volume', 'declared_sales_volume', 'declared_purchase_volume']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.replace(r'\s+', '', regex=True).str.replace(',', '.')
+
         columns_to_keep = ['date', 'hour', 'price', 'sales_volume', 'purchase_volume', 'declared_sales_volume', 'declared_purchase_volume']
         records = [DamPrice(**row) for row in df[columns_to_keep].to_dict('records')]
         DamPrice.objects.bulk_create(records, ignore_conflicts=True, batch_size=500)
